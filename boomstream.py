@@ -11,6 +11,7 @@ import sys
 from base64 import b64decode
 from lxml.html import fromstring
 import requests
+from tqdm import tqdm
 
 XOR_KEY = 'bla_bla_bla'
 
@@ -229,7 +230,11 @@ class App(object):
         filenames = []
 
         i = 0
-        for line in chunklist.split('\n'):
+        # Clean the chunklist
+        chunklist_clean = [url for url in chunklist.split('\n') if url.startswith('https://')]
+
+        for line in tqdm(chunklist_clean, desc='Downloading chunks...', total=len(chunklist_clean),
+                         unit='chunks'):
             if not line.startswith('https://'):
                 continue
             outf = output_path(os.path.join(key, f"{i:05d}.ts"))
@@ -238,7 +243,6 @@ class App(object):
                 i += 1
                 print(f"Chunk #{i} exists [{outf}]")
                 continue
-            print(f"Downloading chunk #{i}")
             run_bash(f'curl -s "{line}" | openssl aes-128-cbc -K "{hex_key}" -iv "{iv}" -d > {outf}')
             i += 1
         return filenames

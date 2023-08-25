@@ -1,2 +1,3 @@
-requests
-lxml
+requests==2.31.0
+lxml==4.9.3
+tqdm==4.66.1
