@@ -21,6 +21,9 @@ Command line arguments:
 
 `--resolution` - video resolution. If not specified, the video with a highest one will be downloaded
 
+`--external_mode` - use this mode, if you don't have the movie link, but have key_url and m3u8 playlist url.
+In this case run the script with the corresponding --key_url and --m3u8_url parameters
+
 Excample:
 ```bash
 --entity TiAR7aDs --pin 123-456-789 --resolution "640x360"

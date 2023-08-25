@@ -52,10 +52,15 @@ class App(object):
 
     def __init__(self):
         parser = argparse.ArgumentParser(description='boomstream.com downloader')
-        parser.add_argument('--entity', type=str, required=True)
+        parser.add_argument('--entity', type=str, required=False)
         parser.add_argument('--pin', type=str, required=False)
         parser.add_argument('--use-cache', action='store_true', required=False)
         parser.add_argument('--resolution', type=str, required=False)
+        parser.add_argument('--external_mode', action='store_true', help="Use this mode, "
+                                                                         "if you don't have any video link, but have"
+                                                                         "playlist and key links", default=False)
+        parser.add_argument('--m3u8_url', type=str, required=False)
+        parser.add_argument('--key_url', type=str, required=False)
         self.args = parser.parse_args()
 
     def get_token(self):
@@ -201,9 +206,11 @@ class App(object):
 
         key = None
         iv = ''.join([f'{ord(c):02x}' for c in decr[20:36]])
-
-        key_url = 'https://play.boomstream.com/api/process/' + \
+        if not self.args.external_mode:
+            key_url = 'https://play.boomstream.com/api/process/' + \
                   self.encrypt(decr[0:20] + self.token, XOR_KEY)
+        else:
+            key_url = self.args.key_url
 
         print(f'key url = {key_url}')
 
@@ -248,13 +255,14 @@ class App(object):
         result_format = run_bash(f'ffprobe -i {output_path(key)}.mp4 -show_format')
         result_duration = float([line[len("duration="):] for line in result_format.split('\n') if line.startswith("duration=")][0])
         print(f"Result duration: {result_duration:.2f}")
-        print(f"Expected duration: {expected_result_duration:.2f}")
-        if abs(result_duration - expected_result_duration) > 2:
-            raise ValueError(f"unexpected result duration: {expected_result_duration:.2f} != {result_duration:.2f}")
+        if not self.args.external_mode:
+            print(f"Expected duration: {expected_result_duration:.2f}")
+            if abs(result_duration - expected_result_duration) > 2:
+                raise ValueError(f"unexpected result duration: {expected_result_duration:.2f} != {result_duration:.2f}")
 
-        ensure_folder_exists(output_path("results"))
-        result_filename = output_path(os.path.join("results", f"{valid_filename(self.get_title())}.mp4"))
-        os.rename(f'{output_path(key)}.mp4', result_filename)
+            ensure_folder_exists(output_path("results"))
+            result_filename = output_path(os.path.join("results", f"{valid_filename(self.get_title())}.mp4"))
+            os.rename(f'{output_path(key)}.mp4', result_filename)
 
     def get_title(self):
         return self.config['entity']['title']
@@ -277,32 +285,36 @@ class App(object):
 
     def run(self):
         ensure_folder_exists(OUTPUT_PATH)
+        if not self.args.external_mode:
 
-        cookies = self.get_access_cookies()
+            cookies = self.get_access_cookies()
 
-        result_path = output_path('result.html')
+            result_path = output_path('result.html')
 
-        if self.args.use_cache and os.path.exists(result_path):
-            page = open(result_path).read()
+            if self.args.use_cache and os.path.exists(result_path):
+                page = open(result_path).read()
+            else:
+                r = requests.get(f'https://play.boomstream.com/{self.args.entity}', headers=headers, cookies=cookies)
+
+                with open(result_path, 'wt') as f:
+                    f.write(r.text)
+
+                page = r.text
+
+            self.config = self.get_boomstream_config(page)
+            if "mediaData" not in self.config or "duration" not in self.config['mediaData']:
+                raise ValueError(
+                    "Video config is not available. Probably, the live streaming has not finished yet, or you use "
+                    "an incorrect pin code. If you're sure that translation is finished and pin code is correct, please "
+                    "create an issue in project github tracker and attach your boomstream.config.json file.")
+            self.token = self.get_token()
+
+            self.m3u8_url = self.get_m3u8_url()
+            self.expected_result_duration = float(self.config['mediaData']['duration'])
+            print(f"Token = {self.token}")
         else:
-            r = requests.get(f'https://play.boomstream.com/{self.args.entity}', headers=headers, cookies=cookies)
+            self.m3u8_url = self.args.m3u8_url
 
-            with open(result_path, 'wt') as f:
-                f.write(r.text)
-
-            page = r.text
-
-        self.config = self.get_boomstream_config(page)
-        if "mediaData" not in self.config or "duration" not in self.config['mediaData']:
-            raise ValueError(
-                "Video config is not available. Probably, the live streaming has not finished yet, or you use "
-                "an incorrect pin code. If you're sure that translation is finished and pin code is correct, please "
-                "create an issue in project github tracker and attach your boomstream.config.json file.")
-        self.token = self.get_token()
-        self.m3u8_url = self.get_m3u8_url()
-        self.expected_result_duration = float(self.config['mediaData']['duration'])
-
-        print(f"Token = {self.token}")
         print(f"Playlist: {self.m3u8_url}")
 
         playlist = self.get_playlist(self.m3u8_url)
@@ -313,7 +325,10 @@ class App(object):
         print(f'X-MEDIA-READY: {xmedia_ready}')
         iv, key = self.get_aes_key(xmedia_ready)
         filenames = self.download_chunks(chunklist, iv, key)
-        self.merge_chunks(filenames, key, self.expected_result_duration)
+        if not self.args.external_mode:
+            self.merge_chunks(filenames, key, self.expected_result_duration)
+        else:
+            self.merge_chunks(filenames, key, 0)
 
 if __name__ == '__main__':
     app = App()
